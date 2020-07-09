@@ -283,6 +283,7 @@ func WaitForGuestNet(client *govmomi.Client, vm *object.VirtualMachine, routable
 		routable,
 		timeout,
 	)
+	log.Printf("[DEBUG][%q] Enter WaitForGuestNet", vm.Name())
 	var v4gw, v6gw net.IP
 
 	p := client.PropertyCollector()
@@ -297,23 +298,32 @@ func WaitForGuestNet(client *govmomi.Client, vm *object.VirtualMachine, routable
 
 			switch v := c.Val.(type) {
 			case types.ArrayOfGuestStackInfo:
+				log.Printf("[DEBUG][%q] GuestStackInfo: %+v\n", vm.Name(), v.GuestStackInfo)
 				for _, s := range v.GuestStackInfo {
+					log.Printf("[DEBUG][%q] IpRouteConfig: %+v\n", vm.Name(), s.IpRouteConfig)
 					if s.IpRouteConfig != nil {
 						for _, r := range s.IpRouteConfig.IpRoute {
+							log.Printf("[DEBUG][%q] Got IpRoute information:  %+v\n",vm.Name(), r)
 							switch r.Network {
 							case "0.0.0.0":
 								v4gw = net.ParseIP(r.Gateway.IpAddress)
+								log.Printf("[DEBUG][%q] Got ipv4 gateway: %q", vm.Name(), v4gw)
 							case "::":
 								v6gw = net.ParseIP(r.Gateway.IpAddress)
+								log.Printf("[DEBUG][%q] Got ipv6 gateway: %q", vm.Name(), v6gw)
 							}
 						}
+					} else {
+						log.Printf("[DEBUG][%q] Got empty IpRouteConfig!: %q", vm.Name(), s.IpRouteConfig)
 					}
 				}
 			case types.ArrayOfGuestNicInfo:
 				for _, n := range v.GuestNicInfo {
 					if n.IpConfig != nil {
+						log.Printf("[DEBUG][%q] Got the following n.IpConfig.IpAddress: %+v\n", vm.Name(), n.IpConfig.IpAddress)
 						for _, addr := range n.IpConfig.IpAddress {
 							ip := net.ParseIP(addr.IpAddress)
+							log.Printf("[DEBUG][%q] Found ip: %q", vm.Name(), ip)
 							if skipIPAddrForWaiter(ip, ignoredGuestIPs) {
 								continue
 							}
@@ -326,13 +336,30 @@ func WaitForGuestNet(client *govmomi.Client, vm *object.VirtualMachine, routable
 							var mask net.IPMask
 							if ip.To4() != nil {
 								mask = net.CIDRMask(int(addr.PrefixLength), 32)
+								log.Printf("[DEBUG][%q] Got ipv4 mask: %q", vm.Name(), mask)
 							} else {
 								mask = net.CIDRMask(int(addr.PrefixLength), 128)
+								log.Printf("[DEBUG][%q] Got ipv6 mask: %q", vm.Name(), mask)
 							}
 							if ip.Mask(mask).Equal(v4gw.Mask(mask)) || ip.Mask(mask).Equal(v6gw.Mask(mask)) {
+								log.Printf("[DEBUG][%q] IP address is routable: %q equals %q",
+									vm.Name(),
+									ip.Mask(mask),
+									v4gw.Mask(mask))
 								return true
+							} else {
+								log.Printf("##############################################################################################")
+								log.Printf("[DEBUG][%q] Masks do not equal, cannot continue", vm.Name())
+								log.Printf("[DEBUG][%q] Masks value: %q", vm.Name(), mask)
+								log.Printf("[DEBUG][%q] IP %q checked against gateways: ipv4 -> %q and ipv6 -> %q",vm.Name(), ip, v4gw, v6gw)
+								log.Printf("[DEBUG][%q] IP masks checked are %q against: ipv4 -> %q and ipv6 -> %q",vm.Name(), ip.Mask(mask), v4gw.Mask(mask), v6gw.Mask(mask))
+								log.Printf("##############################################################################################")
 							}
 						}
+					} else {
+						log.Printf("##############################################################################################")
+						log.Printf("[DEBUG][%q] Got empty IpConfig!: %+v\n",vm.Name(), n.IpConfig)
+						log.Printf("##############################################################################################")
 					}
 				}
 			}
